@@ -25,18 +25,35 @@ clock and GT output. In the corridor regression, a 0.12 m/s command for 5 s
 produced 0.590 m translation; a 0.3 rad/s command for 5 s produced 1.137 rad
 rotation. Drift over the last 1.5 s of the final stop was 0.6 mm.
 
-The laser publisher also corrects an Isaac Sim 5.1 angular-metadata mismatch.
-The native sensor has 541 endpoint-inclusive rays from −90° to +90° at 15 Hz.
-The original helper labelled their spacing as `180 / 541` degrees, ending at
-+89.667°. The embedded adapter publishes `180 / 540` degrees and the true
-endpoints, while retaining native ranges, intensities, timestamps and ROS context.
-It uses Isaac's native writer lifecycle for Play/Stop and needs no external script.
+The laser retains its native 541 endpoint-inclusive rays, 180° field of view,
+25 m maximum range, 15 Hz rate, and original rolling emission schedule.
+The embedded adapter fixes both the angular labels and the acquisition timing:
 
-This repair passed another three Play/Stop cycles: 512 scans had the corrected
-metadata, and all 477 sampled native FlatScan arrays matched ROS ranges exactly.
-Straight, turn and stop regression also passed (0.586 m, 1.143 rad and 0.6 mm).
-The adapter changes only angular labels; native acquisition-time semantics and
-per-ray motion compensation have not been certified.
+- Angles run from −90° to +90°, with `angle_increment = pi / 540`.
+- A scan contains all 541 emitters from one native scan cycle. Incomplete cycles
+  and duplicate frames are discarded instead of joining unrelated samples.
+- The header marks the acquisition of the first ray in the ROS array. The
+  native beam offsets are related to the corresponding renderer ReferenceTime;
+  no GT, odometry, map, or fitted time shift is used by the publisher.
+- `time_increment` is approximately **−123.229 microseconds**: the sensor emits
+  in the opposite order to the increasing-angle ROS array. `scan_time` is 1/15 s.
+  The old native helper reported a positive half-sized interval and could emit
+  infinity on its first message. Downstream deskew must honor the signed interval.
+
+The adapter is embedded in `tiago.usd` and publishes through Isaac's native
+generic ROS publisher using the graph's ROS context and QoS. It temporarily
+enables synchronous rendering and publishing while active, restoring the
+previous settings on Stop/cleanup. Pause emits no new scans. This affects the
+application's render scheduling and may reduce throughput.
+
+The final timing repair passed three Play/Stop and pause/resume cycles, with
+442 received scans having finite, correct metadata and one scan publisher per
+cycle. An independent moving test with MotionBVH traced all 541 range values
+in each of 207 ROS scans exactly to native data. Beam times reconstructed from
+the ROS header and signed interval differed from native records by at most
+2.7 ns (float/clock rounding). These are simulator consistency checks, not a
+claim about physical sensor timestamp accuracy. The motion regression remained
+0.586 m straight, 1.143 rad turn, and 0.6 mm final stop drift.
 
 If Isaac requests ScriptNode permission, review and enable the model for that
 session. It contains four joint-trajectory adapters and this laser adapter.
@@ -58,6 +75,28 @@ motion regression passed. This is a version-specific simulated calibration;
 revalidate after renderer upgrades. It does not replace real-camera calibration,
 and previously recorded bags still contain their original CameraInfo.
 
+## Moving-lidar rendering
+
+Enable MotionBVH **when starting Isaac**, before creating render products.
+In standalone Python use `SimulationApp({"enable_motion_bvh": True, ...})`.
+For the Isaac Sim 5.1 GUI, the corresponding launch arguments are:
+
+```bash
+./isaac-sim.sh --/renderer/raytracingMotion/enabled=true \
+  --/renderer/raytracingMotion/enableHydraEngineMasking=true \
+  "--/renderer/raytracingMotion/enabledForHydraEngines='0'"
+```
+
+The asset leaves this application startup choice unchanged and warns when
+MotionBVH is disabled. Without it, RTX holds a pose within each render frame,
+even though emitters have different nominal firing times. Enabling it later
+from the robot graph is insufficient and can disrupt renderer selection.
+
+MotionBVH makes the rays reflect motion during acquisition; it does **not**
+deskew the complete scan to one pose. `/scan` remains a raw rolling scan. An AMCL
+implementation that treats every beam at the header pose still needs a separate
+odometry-based deskew step. Old recordings are not repaired by replacing this USD.
+
 ## ROS interfaces
 
 | Interface | Topic |
@@ -74,7 +113,8 @@ RGB and depth use `xtion_rgb_optical_frame`, at 640 × 480. These are distorted
 raw images: rectify both consistently with the published calibration before
 using a rectified pinhole model. Simulator odometry is nearly ideal and should
 not be described as noisy real encoder data. These input-geometry checks are
-not AMCL localization results; scan timing still needs separate validation.
+not AMCL localization results. Per-ray timing is verified on the repaired path;
+whole-scan deskew and localization comparisons remain separate work.
 
 When replacing another robot in an existing scene, check external action graphs
 for references to the removed robot. A `ReadWorldPose` node targeting an inactive
