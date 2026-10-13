@@ -41,6 +41,23 @@ per-ray motion compensation have not been certified.
 If Isaac requests ScriptNode permission, review and enable the model for that
 session. It contains four joint-trajectory adapters and this laser adapter.
 
+RGB and depth `CameraInfo` now describe the effective Isaac Sim 5.1 projection.
+Known-plane controls found that this rendering path uses `fx` on both axes,
+samples at half-integer pixel centers, and reverses the OpenCV `p1` convention.
+The published raw calibration is therefore `fx = fy = 515.87`,
+`cx = 331.78`, `cy = 236.78`, and
+`D = [0.0202, -0.08339, 0.00427, 0.00413, 0]` (`plumb_bob`).
+Only the two publishers' K/D values changed; the renderer's authored lens
+parameters, images, sensor poses and rectified target P/R remain unchanged.
+
+Independent RGB-marker projection error fell from 1.10 to 0.14 pixels median.
+With that same convention, 2,304 development depth rays had a geometric Z-error
+p95 of 0.234 mm instead of 135.55 mm; the largest remaining residual was 47.2 mm.
+Three Play/Stop cycles verified matching RGB/depth calibration, and laser and
+motion regression passed. This is a version-specific simulated calibration;
+revalidate after renderer upgrades. It does not replace real-camera calibration,
+and previously recorded bags still contain their original CameraInfo.
+
 ## ROS interfaces
 
 | Interface | Topic |
@@ -56,8 +73,8 @@ session. It contains four joint-trajectory adapters and this laser adapter.
 RGB and depth use `xtion_rgb_optical_frame`, at 640 × 480. These are distorted
 raw images: rectify both consistently with the published calibration before
 using a rectified pinhole model. Simulator odometry is nearly ideal and should
-not be described as noisy real encoder data. RGB-D geometry and scan timing
-need separate validation for each localization experiment.
+not be described as noisy real encoder data. These input-geometry checks are
+not AMCL localization results; scan timing still needs separate validation.
 
 When replacing another robot in an existing scene, check external action graphs
 for references to the removed robot. A `ReadWorldPose` node targeting an inactive
