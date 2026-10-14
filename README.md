@@ -25,6 +25,18 @@ clock and GT output. In the corridor regression, a 0.12 m/s command for 5 s
 produced 0.590 m translation; a 0.3 rad/s command for 5 s produced 1.137 rad
 rotation. Drift over the last 1.5 s of the final stop was 0.6 mm.
 
+The odometry TF publisher now waits for `ComputeOdometry.outputs:execOut`,
+just like the `/odom` publisher. Previously it ran directly from the playback
+tick and published the preceding odometry sample with the current timestamp:
+a one-frame (16.7 ms at 60 Hz) lag. The repair changes only that execution
+connection. Three Play/Stop cycles and a moving regression checked 1,973
+same-stamp `/odom`/`odom -> base_footprint` pairs: every position and quaternion
+component matched exactly. Sensor checks and the 0.586 m straight / 1.143 rad
+turn regression passed. Existing recordings retain their original TF; replay
+repair must explicitly copy the original `/odom` pose into this edge at the
+same timestamp, preserving the other transforms. No GT or fitted shift is
+needed for that correction.
+
 The laser retains its native 541 endpoint-inclusive rays, 180° field of view,
 25 m maximum range, 15 Hz rate, and original rolling emission schedule.
 The embedded adapter fixes both the angular labels and the acquisition timing:
